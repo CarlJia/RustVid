@@ -127,7 +127,8 @@ jobs:
           $sumFile = "target/SHA256SUMS"
           if (Test-Path $sumFile) { Remove-Item $sumFile -Force }
           $patterns = @(
-            "target/release/bundle/macos/*.app",
+            # macOS 上 .app 是 bundle 目录(Get-FileHash 不能 hash 目录),
+            # GitHub release 实际分发的是 .dmg,这里只列 .dmg
             "target/release/bundle/macos/*.dmg",
             "target/release/bundle/msi/*.msi",
             "target/release/bundle/nsis/*.exe",
@@ -136,7 +137,8 @@ jobs:
             "target/release/bundle/appimage/*.AppImage"
           )
           $entries = foreach ($pat in $patterns) {
-            Get-ChildItem -Path $pat -ErrorAction SilentlyContinue | ForEach-Object {
+            # -File 过滤掉目录,防止 macOS runner 上 .app 等被误匹配
+            Get-ChildItem -Path $pat -ErrorAction SilentlyContinue -File | ForEach-Object {
               $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
               "$h  $($_.Directory.Name)/$($_.Name)"
             }
