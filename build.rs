@@ -141,7 +141,7 @@ fn target_to_asset(target: &str) -> Option<&'static str> {
         "arm-unknown-linux-gnueabihf" | "arm-unknown-linux-musleabihf" => Some("linux-arm"),
         "x86_64-unknown-linux-gnu" | "x86_64-unknown-linux-musl" => Some("linux-x64"),
         "i686-unknown-linux-gnu" | "i686-unknown-linux-musl" => Some("linux-ia32"),
-        "x86_64-pc-windows-msvc" => Some("win32-x64.exe"),
+        "x86_64-pc-windows-msvc" => Some("win32-x64"),
         _ => None,
     }
 }
