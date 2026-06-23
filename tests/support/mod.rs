@@ -26,11 +26,6 @@ pub async fn app_with_fake_transcoder(fail: bool) -> TestApp {
     TestApp { state, _tmp: tmp }
 }
 
-#[allow(dead_code)]
-pub fn router(state: AppState) -> axum::Router {
-    app::router(state)
-}
-
 pub struct TestTranscoder {
     pub fail: bool,
 }
@@ -40,32 +35,33 @@ impl Transcoder for TestTranscoder {
     async fn transcode(
         &self,
         _input: &Path,
-        output_dir: &Path,
+        output: &Path,
+        work_dir: &Path,
         plan: &OutputPlan,
+        _progress: Option<rustvid::services::ffmpeg::ProgressFn>,
     ) -> anyhow::Result<TranscodeOutput> {
         if self.fail {
             anyhow::bail!("模拟 FFmpeg 失败");
         }
-        fs::create_dir_all(output_dir).await?;
+        fs::create_dir_all(work_dir).await?;
         match plan.target {
             OutputTarget::Mp4 => {
-                let output = output_dir.join("output.mp4");
-                fs::write(&output, b"fake mp4").await?;
+                fs::write(output, b"fake mp4").await?;
                 Ok(TranscodeOutput {
-                    preview_path: output.clone(),
-                    download_path: output,
+                    preview_path: output.to_path_buf(),
+                    download_path: output.to_path_buf(),
                 })
             }
             OutputTarget::Hls => {
-                let playlist = output_dir.join("stream.m3u8");
-                let segment = output_dir.join("segment_000.ts");
-                let zip = output_dir.join("hls-package.zip");
+                let playlist = work_dir.join("stream.m3u8");
+                let segment = work_dir.join("segment_000.ts");
+                let zip = output;
                 fs::write(&playlist, b"#EXTM3U\n").await?;
                 fs::write(&segment, b"fake segment").await?;
                 fs::write(&zip, b"fake zip").await?;
                 Ok(TranscodeOutput {
                     preview_path: playlist,
-                    download_path: zip,
+                    download_path: zip.to_path_buf(),
                 })
             }
         }

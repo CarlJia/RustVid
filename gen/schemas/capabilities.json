@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"RustVid 默认 capabilities:核心 IPC + dialog 文件选择 / 确认弹框","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-open","dialog:allow-save","dialog:allow-ask","dialog:allow-message"]}}

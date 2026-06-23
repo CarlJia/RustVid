@@ -6,13 +6,11 @@ use anyhow::Context;
 pub struct Config {
     pub data_dir: PathBuf,
     pub max_file_size: u64,
-    pub max_total_storage: u64,
     pub max_concurrent_transcodes: usize,
 }
 
 impl Config {
     pub const DEFAULT_MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024;
-    pub const DEFAULT_MAX_TOTAL_STORAGE: u64 = 200 * 1024 * 1024 * 1024;
     pub const DEFAULT_MAX_CONCURRENT_TRANSCODES: usize = 2;
 
     pub fn from_env() -> anyhow::Result<Self> {
@@ -27,7 +25,6 @@ impl Config {
         Ok(Self {
             data_dir,
             max_file_size: Self::DEFAULT_MAX_FILE_SIZE,
-            max_total_storage: Self::DEFAULT_MAX_TOTAL_STORAGE,
             max_concurrent_transcodes: Self::DEFAULT_MAX_CONCURRENT_TRANSCODES,
         })
     }

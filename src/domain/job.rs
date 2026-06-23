@@ -11,6 +11,12 @@ pub struct VideoJob {
     pub status: JobStatus,
     pub error_summary: Option<String>,
     pub artifact_id: Option<String>,
+    /// 源视频总时长(秒),由 ffmpeg 探测填充;`None` = 探测失败或旧任务(无此字段)
+    #[serde(default)]
+    pub source_duration_secs: Option<f64>,
+    /// 创建时间,SQLite CURRENT_TIMESTAMP(ISO 8601 字符串)
+    #[serde(default)]
+    pub created_at: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +46,7 @@ impl JobStatus {
             (Self::Queued, Self::Processing)
                 | (Self::Processing, Self::Completed)
                 | (Self::Processing, Self::Failed)
+                | (Self::Processing, Self::Deleted)
                 | (Self::Failed, Self::Queued)
                 | (Self::Completed, Self::Deleted)
                 | (Self::Failed, Self::Deleted)

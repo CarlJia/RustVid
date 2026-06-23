@@ -1,0 +1,1 @@
+{"root":["./src/api.ts","./src/main.ts","./src/router.ts","./src/app.vue","./src/components/joblist.vue","./src/components/statusbadge.vue","./src/components/uploadform.vue","./src/views/homeview.vue","./src/views/jobview.vue"],"version":"5.9.3"}

@@ -1,8 +1,14 @@
 /target/
 /data/
+/frontend/dist/
+/frontend/node_modules/
+/frontend/.vite/
 *.sqlite3
 *.mp4
 *.mov
 *.m4v
 *.mkv
 *.webm
+.DS_Store
+*.swp
+.idea/

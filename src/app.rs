@@ -1,12 +1,9 @@
-use axum::{
-    Router,
-    routing::{get, post},
-};
-use tower_http::{services::ServeDir, trace::TraceLayer};
+use std::time::{Duration, Instant};
+
+use tauri::AppHandle;
 
 use crate::{
     config::Config,
-    http::{assets, jobs, pages, uploads},
     persistence::sqlite::Database,
     services::{
         artifact_store::ArtifactStore,
@@ -28,30 +25,56 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(config: Config) -> anyhow::Result<Self> {
+    /// 生产入口:由 Tauri setup 调用,持有 AppHandle 用于 emit Tauri 事件
+    pub async fn new(config: Config, app: AppHandle) -> anyhow::Result<Self> {
         let db = Database::open(&config.database_path())?;
-        let state = build_state(config, db).await?;
+        // 启动时回收上一次崩溃留下的"僵尸"Processing 任务 → 标记 Failed
+        // 不重试,让用户自己决定是重试还是删除(避免误转码)
+        match db.reap_stale_processing() {
+            Ok(ids) if !ids.is_empty() => {
+                tracing::warn!(
+                    count = ids.len(),
+                    "回收僵尸 Processing 任务(应用上次未正常退出): {ids:?}"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("回收僵尸任务失败:{e}"),
+        }
+        let state = build_state(config, db, Some(app)).await?;
+        // 后台预热:启动时就把 bundled ffmpeg 抽到 cache,避免首次转码延迟
+        // + 让损坏/版本不一致的旧 cache 在启动时就被覆盖(extract_to_cache 内部有 magic 字节检查)
+        tokio::spawn(async {
+            let path = crate::services::ffmpeg_binary::ffmpeg_path();
+            tracing::info!(path = %path.display(), "ffmpeg 预热完成");
+        });
         spawn_worker(state.queue.clone());
         Ok(state)
     }
 
+    /// 测试入口:不持有 AppHandle,进度回调不 emit 事件
     pub async fn for_test(
         config: Config,
         db: Database,
         transcoder: crate::services::ffmpeg::SharedTranscoder,
     ) -> anyhow::Result<Self> {
-        build_state_with_transcoder(config, db, transcoder).await
+        build_state_with_transcoder(config, db, transcoder, None).await
     }
 }
 
-async fn build_state(config: Config, db: Database) -> anyhow::Result<AppState> {
-    build_state_with_transcoder(config, db, shared_transcoder(FfmpegTranscoder)).await
+async fn build_state(
+    config: Config,
+    db: Database,
+    app: Option<AppHandle>,
+) -> anyhow::Result<AppState> {
+    let transcoder = shared_transcoder(FfmpegTranscoder);
+    build_state_with_transcoder(config, db, transcoder, app).await
 }
 
 async fn build_state_with_transcoder(
     config: Config,
     db: Database,
     transcoder: crate::services::ffmpeg::SharedTranscoder,
+    app: Option<AppHandle>,
 ) -> anyhow::Result<AppState> {
     let artifacts = ArtifactStore::new(config.clone());
     artifacts.ensure_dirs().await?;
@@ -63,6 +86,7 @@ async fn build_state_with_transcoder(
         artifacts.clone(),
         transcoder,
         config.max_concurrent_transcodes,
+        app,
     );
     Ok(AppState {
         config,
@@ -74,38 +98,9 @@ async fn build_state_with_transcoder(
     })
 }
 
-pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/", get(pages::index))
-        .route("/jobs/{id}", get(pages::job_page))
-        .route("/api/health", get(|| async { "ok" }))
-        .route("/api/presets", get(jobs::presets))
-        .route("/api/usage", get(jobs::usage))
-        .route("/api/uploads", post(uploads::create_upload))
-        .route(
-            "/api/uploads/{id}",
-            get(uploads::head_upload)
-                .head(uploads::head_upload)
-                .patch(uploads::patch_upload),
-        )
-        .route("/api/jobs", get(jobs::list_jobs).post(jobs::create_job))
-        .route(
-            "/api/jobs/{id}",
-            get(jobs::get_job).delete(jobs::delete_job),
-        )
-        .route("/api/jobs/{id}/retry", post(jobs::retry_job))
-        .route("/api/jobs/process-next", post(jobs::process_next))
-        .route("/assets/{artifact_id}/preview", get(assets::preview))
-        .route("/assets/{artifact_id}/files/{file}", get(assets::hls_file))
-        .route("/assets/{artifact_id}/download", get(assets::download))
-        .nest_service("/static", ServeDir::new("src/ui/static"))
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
-}
-
 fn spawn_worker(queue: JobQueue) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
         loop {
             interval.tick().await;
             if let Err(err) = queue.process_one().await {
@@ -114,3 +109,29 @@ fn spawn_worker(queue: JobQueue) {
         }
     });
 }
+
+/// 初始化 tracing(东八区 +08:00 + Tauri 日志桥接)
+/// 由 main.rs 在 tauri::Builder 启动前调用。
+pub fn setup_logging() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        use time::UtcOffset;
+        use time::format_description::well_known::Rfc3339;
+        use tracing_subscriber::fmt::time::OffsetTime;
+
+        let east8 = UtcOffset::from_hms(8, 0, 0).expect("构造 UTC+8 偏移量失败");
+        let timer = OffsetTime::new(east8, Rfc3339);
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "rustvid=info".into()),
+            )
+            .with_timer(timer)
+            .init();
+    });
+}
+
+// 静默 unused 警告
+#[allow(dead_code)]
+const _INSTANT_TYPE_CHECK: Option<Instant> = None;

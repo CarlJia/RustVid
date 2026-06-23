@@ -47,6 +47,42 @@ impl UploadService {
         Ok(session)
     }
 
+    /// Tauri 模式下的入口:用户选文件 → Tauri 拿本地 path → 后端一次性 copy 到 uploads 目录
+    pub async fn create_from_path(
+        &self,
+        filename: &str,
+        src_path: &str,
+    ) -> anyhow::Result<UploadSession> {
+        let src = std::path::Path::new(src_path);
+        let meta = fs::metadata(src)
+            .await
+            .with_context(|| format!("源文件不存在:{src_path}"))?;
+        if !meta.is_file() {
+            anyhow::bail!("所选路径不是文件:{src_path}");
+        }
+        let length = meta.len();
+        self.capacity.ensure_can_upload(length)?;
+
+        fs::create_dir_all(&self.uploads_dir).await?;
+        let id = Uuid::new_v4().to_string();
+        let dest = self.uploads_dir.join(&id);
+        // tokio::fs::copy 流式 copy,不加载整个文件到内存(支持几个 GB 大文件)
+        fs::copy(src, &dest)
+            .await
+            .with_context(|| format!("复制源文件失败:{} -> {}", src_path, dest.display()))?;
+
+        let session = UploadSession {
+            id,
+            filename: filename.to_string(),
+            length,
+            offset: length, // 一次性 copy 完成,offset = length
+            path: path_to_string(dest)?,
+            status: UploadStatus::Uploaded,
+        };
+        self.db.insert_upload(&session)?;
+        Ok(session)
+    }
+
     pub fn get(&self, id: &str) -> anyhow::Result<UploadSession> {
         self.db
             .get_upload(id)?

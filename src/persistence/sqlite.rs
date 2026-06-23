@@ -59,6 +59,7 @@ impl Database {
                 status TEXT NOT NULL,
                 error_summary TEXT,
                 artifact_id TEXT,
+                source_duration_secs REAL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(upload_id) REFERENCES uploads(id)
@@ -77,6 +78,11 @@ impl Database {
             "#,
         )
         .context("初始化数据库结构失败")?;
+        // 老库 schema 迁移:为已存在的 jobs 表加 source_duration_secs 列(忽略"已存在"错误)
+        let _ = conn.execute(
+            "ALTER TABLE jobs ADD COLUMN source_duration_secs REAL",
+            [],
+        );
         Ok(())
     }
 
@@ -137,7 +143,7 @@ impl Database {
     pub fn insert_job(&self, job: &VideoJob) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("数据库锁被污染");
         conn.execute(
-            "INSERT INTO jobs (id, upload_id, preset, target, status, error_summary, artifact_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO jobs (id, upload_id, preset, target, status, error_summary, artifact_id, source_duration_secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 job.id,
                 job.upload_id,
@@ -146,6 +152,7 @@ impl Database {
                 job.status.as_str(),
                 job.error_summary,
                 job.artifact_id,
+                job.source_duration_secs,
             ],
         )
         .context("保存转码任务失败")?;
@@ -156,7 +163,7 @@ impl Database {
         let conn = self.conn.lock().expect("数据库锁被污染");
         let mut stmt = conn
             .prepare(
-                "SELECT id, upload_id, preset, target, status, error_summary, artifact_id FROM jobs WHERE status != 'deleted' ORDER BY created_at DESC",
+                "SELECT id, upload_id, preset, target, status, error_summary, artifact_id, source_duration_secs, created_at FROM jobs WHERE status != 'deleted' ORDER BY created_at DESC",
             )
             .context("准备任务列表查询失败")?;
         let rows = stmt.query_map([], map_job)?;
@@ -167,7 +174,7 @@ impl Database {
     pub fn get_job(&self, id: &str) -> anyhow::Result<Option<VideoJob>> {
         let conn = self.conn.lock().expect("数据库锁被污染");
         conn.query_row(
-            "SELECT id, upload_id, preset, target, status, error_summary, artifact_id FROM jobs WHERE id = ?1",
+            "SELECT id, upload_id, preset, target, status, error_summary, artifact_id, source_duration_secs, created_at FROM jobs WHERE id = ?1",
             params![id],
             map_job,
         )
@@ -178,7 +185,7 @@ impl Database {
     pub fn next_queued_job(&self) -> anyhow::Result<Option<VideoJob>> {
         let conn = self.conn.lock().expect("数据库锁被污染");
         conn.query_row(
-            "SELECT id, upload_id, preset, target, status, error_summary, artifact_id FROM jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1",
+            "SELECT id, upload_id, preset, target, status, error_summary, artifact_id, source_duration_secs, created_at FROM jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1",
             [],
             map_job,
         )
@@ -196,6 +203,35 @@ impl Database {
             )
             .context("统计转码中任务失败")?;
         Ok(count as usize)
+    }
+
+    /// 启动时回收:把卡在 Processing 状态的任务标记为 Failed(原因:应用重启,转码中断)
+    /// 返回被回收的 job ID 列表
+    pub fn reap_stale_processing(&self) -> anyhow::Result<Vec<String>> {
+        let conn = self.conn.lock().expect("数据库锁被污染");
+        let mut stmt = conn
+            .prepare("SELECT id FROM jobs WHERE status = 'processing'")
+            .context("查询僵尸任务失败")?;
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()
+            .context("读取僵尸任务 ID 失败")?;
+        for id in &ids {
+            conn.execute(
+                "UPDATE jobs SET status = 'failed', error_summary = '应用重启,转码中断,请手动重试', updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+                params![id],
+            )
+            .context("标记僵尸任务失败")?;
+        }
+        Ok(ids)
+    }
+
+    /// 删除任务的 artifact 记录(释放存储容量计数)
+    pub fn delete_artifact_by_job(&self, job_id: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().expect("数据库锁被污染");
+        conn.execute("DELETE FROM artifacts WHERE job_id = ?1", params![job_id])
+            .context("删除产物记录失败")?;
+        Ok(())
     }
 
     pub fn transition_job(
@@ -271,6 +307,29 @@ impl Database {
         .context("标记任务删除失败")?;
         Ok(())
     }
+
+    /// 真删(用于一键清理):从 jobs 表移除,触发 ON DELETE CASCADE 自动删 artifacts 行
+    /// 返回影响的行数(0/1)
+    pub fn hard_delete_job(&self, job_id: &str) -> anyhow::Result<usize> {
+        let conn = self.conn.lock().expect("数据库锁被污染");
+        let n = conn
+            .execute("DELETE FROM jobs WHERE id = ?1", params![job_id])
+            .context("硬删任务失败")?;
+        Ok(n)
+    }
+
+    /// 列出所有失败任务(状态='failed'),按时间正序(旧的先清)
+    pub fn list_failed_jobs(&self) -> anyhow::Result<Vec<VideoJob>> {
+        let conn = self.conn.lock().expect("数据库锁被污染");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, upload_id, preset, target, status, error_summary, artifact_id, source_duration_secs, created_at FROM jobs WHERE status = 'failed' ORDER BY created_at ASC",
+            )
+            .context("准备失败任务查询失败")?;
+        let rows = stmt.query_map([], map_job)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("读取失败任务列表失败")
+    }
 }
 
 fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<VideoJob> {
@@ -285,6 +344,8 @@ fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<VideoJob> {
         status: JobStatus::try_from(status.as_str()).map_err(|err| conversion_error(4, err))?,
         error_summary: row.get(5)?,
         artifact_id: row.get(6)?,
+        source_duration_secs: row.get::<_, Option<f64>>(7)?,
+        created_at: row.get::<_, String>(8).unwrap_or_default(),
     })
 }
 

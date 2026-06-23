@@ -1,3 +1,7 @@
+use std::path::Path;
+
+use fs2::free_space;
+
 use crate::{config::Config, persistence::sqlite::Database};
 
 #[derive(Clone)]
@@ -12,13 +16,11 @@ impl CapacityService {
     }
 
     pub fn ensure_can_upload(&self, length: u64) -> anyhow::Result<()> {
+        // 单文件上限(2GB)—— 防止单文件过大导致内存/磁盘压力
         if length > self.config.max_file_size {
             anyhow::bail!("单个视频不能超过 2GB");
         }
-        let projected = self.db.total_artifact_bytes()?.saturating_add(length);
-        if projected > self.config.max_total_storage {
-            anyhow::bail!("存储容量已达到 200GB 上限，请先删除历史任务");
-        }
+        // 不再做总容量封顶:展示系统磁盘剩余空间即可,由用户自行决定何时清理
         Ok(())
     }
 
@@ -31,15 +33,35 @@ impl CapacityService {
     }
 
     pub fn usage(&self) -> anyhow::Result<StorageUsage> {
+        let (disk_free_bytes, disk_total_bytes) = disk_space(&self.config.data_dir)?;
         Ok(StorageUsage {
             used_bytes: self.db.total_artifact_bytes()?,
-            max_bytes: self.config.max_total_storage,
+            disk_free_bytes,
+            disk_total_bytes,
         })
+    }
+}
+
+/// 拿 `path` 所在文件系统的剩余空间和总容量。
+///
+/// 任何错误(路径消失、权限不足等)都返回 Ok((0, 0))——前端能展示"系统磁盘剩余空间暂不可用"
+/// 而不至于让整个 `get_usage` 命令崩。
+fn disk_space(path: &Path) -> anyhow::Result<(u64, u64)> {
+    match (free_space(path), fs2::total_space(path)) {
+        (Ok(free), Ok(total)) => Ok((free, total)),
+        // 半失败(比如某些容器 fs 不支持 total)给个回退:total 用 used + free 估算
+        (Ok(free), Err(_)) => Ok((free, free)),
+        (Err(_), Ok(total)) => Ok((0, total)),
+        (Err(_), Err(_)) => Ok((0, 0)),
     }
 }
 
 #[derive(Debug, serde::Serialize)]
 pub struct StorageUsage {
+    /// RustVid 已用字节数(uploads + artifacts)
     pub used_bytes: u64,
-    pub max_bytes: u64,
+    /// 系统磁盘剩余可用字节数(data_dir 所在文件系统)
+    pub disk_free_bytes: u64,
+    /// 系统磁盘总容量字节数(供前端进度条展示)
+    pub disk_total_bytes: u64,
 }

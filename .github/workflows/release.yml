@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS (Apple Silicon)
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          # macOS (Intel)
+          - platform: macos-13   # 旧版 Intel runner
+            target: x86_64-apple-darwin
+          # Windows 11 x64 兼容(runner 是 Server 2022/2025,产物在 Win11 桌面运行验证)
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+          # Linux
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: 安装 Linux 依赖
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: npm ci || npm install
+
+      - name: 缓存 cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - name: 构建并打包 Tauri 应用
+        run: ./frontend/node_modules/.bin/tauri build
+
+      # Windows x64:解 NSIS 安装器,提取 portable 单文件 zip(不安装即可运行的 exe + DLL)
+      - name: 安装 7-Zip(用于解 NSIS)
+        if: matrix.platform == 'windows-latest'
+        run: choco install 7zip -y --no-progress
+
+      - name: 提取 Windows portable exe
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Get-ChildItem target/release/bundle/nsis/*.exe |
+            Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "找不到 NSIS 安装器 (target/release/bundle/nsis/*.exe)"
+            exit 1
+          }
+          $extractDir = "target/release/bundle/nsis/_extracted"
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+
+          # 7z 解 NSIS 自解压包(Tauri NSIS 模板用 lzma 压缩,7z 可解)
+          & 7z x $installer.FullName "-o$extractDir" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "7z 解 NSIS 失败,exit=$LASTEXITCODE"
+            exit 1
+          }
+
+          # 找主 exe:递归找最大且不是 uninstaller 的 exe
+          # 排除 uninst / setup / 7zS.sfx(NSIS 自解压引导)等
+          $mainExe = Get-ChildItem $extractDir -Recurse -Filter "*.exe" |
+            Where-Object {
+              $_.Name -notmatch '(?i)^(uninst|setup|7zS)' -and
+              $_.Length -gt 1MB
+            } |
+            Sort-Object Length -Descending |
+            Select-Object -First 1
+
+          if (-not $mainExe) {
+            Write-Error "解压后找不到主 exe(>1MB)"
+            Get-ChildItem $extractDir -Recurse -Filter "*.exe" |
+              Select-Object FullName, Length | Format-Table -AutoSize
+            exit 1
+          }
+          $appDir = $mainExe.DirectoryName
+          Write-Host "主 exe: $($mainExe.FullName) ($([math]::Round($mainExe.Length/1MB,2)) MB)"
+          Write-Host "应用目录: $appDir"
+
+          # 把主 exe 所在目录(包含 DLL)打成 portable zip
+          $portableZip = "target/release/bundle/nsis/RustVid_0.1.0_x64_portable.zip"
+          if (Test-Path $portableZip) { Remove-Item $portableZip -Force }
+          Compress-Archive -Path "$appDir\*" -DestinationPath $portableZip -CompressionLevel Optimal
+          $zipInfo = Get-Item $portableZip
+          Write-Host "✓ portable zip: $portableZip ($([math]::Round($zipInfo.Length/1MB,2)) MB)"
+
+      # 生成 SHA256SUMS 校验文件(覆盖所有平台的所有产物,便于手动分发校验)
+      - name: 生成 SHA256SUMS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sumFile = "target/SHA256SUMS"
+          if (Test-Path $sumFile) { Remove-Item $sumFile -Force }
+          $entries = @()
+          $patterns = @(
+            "target/release/bundle/macos/*.app",
+            "target/release/bundle/macos/*.dmg",
+            "target/release/bundle/msi/*.msi",
+            "target/release/bundle/nsis/*.exe",
+            "target/release/bundle/nsis/*.zip",
+            "target/release/bundle/deb/*.deb",
+            "target/release/bundle/appimage/*.AppImage"
+          )
+          foreach ($pat in $patterns) {
+            Get-ChildItem -Path $pat -ErrorAction SilentlyContinue | ForEach-Object {
+              $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+              "$h  $("$($_.Directory.Name)/$($_.Name)")"
+            }
+          } | ForEach-Object { $entries += $_ }
+          $entries | Out-File -FilePath $sumFile -Encoding utf8
+          Get-Content $sumFile
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustvid-${{ matrix.target }}
+          path: |
+            target/release/bundle/macos/*.app
+            target/release/bundle/macos/*.dmg
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/nsis/*.zip
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+            target/SHA256SUMS
+          if-no-files-found: ignore
