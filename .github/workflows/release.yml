@@ -65,6 +65,22 @@ jobs:
       - name: 构建并打包 Tauri 应用
         run: ./frontend/node_modules/.bin/tauri build
 
+      # macOS:ad-hoc 签名(无证书场景下让 Gatekeeper 不报 "damaged")
+      # -s -  表示 ad-hoc(自己签自己),--force 覆盖已有签名,--deep 递归整个 bundle
+      # 首次打开仍会弹"未识别开发者"(右键→打开即可),如需消除需升级到 Developer ID + 公证
+      - name: macOS ad-hoc 签名
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          APP_PATH="target/release/bundle/macos/RustVid.app"
+          if [ -d "$APP_PATH" ]; then
+            codesign --force --deep --sign - "$APP_PATH"
+            echo "✓ ad-hoc signed: $APP_PATH"
+            codesign -dvv "$APP_PATH" 2>&1 | head -5
+          else
+            echo "::warning::$APP_PATH 不存在,跳过签名"
+          fi
+
       # Windows x64:解 NSIS 安装器,提取 portable 单文件 zip(不安装即可运行的 exe + DLL)
       - name: 安装 7-Zip(用于解 NSIS)
         if: matrix.platform == 'windows-latest'
