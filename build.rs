@@ -278,10 +278,10 @@ fn fetch_btbn_asset_sha(archive_name: &str) -> io::Result<String> {
     // 格式:`<hash>  <filename>`(`read_to_string` 不会去掉末尾换行,逐行扫)
     for line in body.lines() {
         let mut parts = line.split_whitespace();
-        if let (Some(hash), Some(name)) = (parts.next(), parts.next())
+        if let (Some(hash_raw), Some(name)) = (parts.next(), parts.next())
             && name == archive_name
         {
-            return Ok(hash.to_string());
+            return parse_hash_token(hash_raw);
         }
     }
     Err(io::Error::other(format!(
@@ -433,6 +433,8 @@ fn parse_asset_sha256(body: &str, asset_name: &str) -> Option<String> {
 
 fn compute_sha256(path: &Path) -> io::Result<String> {
     // 不引外部依赖,用系统 shasum(perl 兼容)或 sha256sum
+    // Windows runner 默认有 sha256sum(Git for Windows 自带),但 shasum 不一定有,
+    // 用 shasum 优先是因为 macOS 默认有,Linux 通常两者都有
     let output = Command::new("shasum")
         .arg("-a")
         .arg("256")
@@ -447,16 +449,42 @@ fn compute_sha256(path: &Path) -> io::Result<String> {
     };
     if !output.status.success() {
         return Err(io::Error::other(format!(
-            "sha256 命令失败 exit={:?}",
-            output.status.code()
+            "sha256 命令失败 exit={:?},stderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+                .chars()
+                .take(200)
+                .collect::<String>()
         )));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // 格式:`<hash>  <file>` (shasum / sha256sum 都是这样)
-    stdout
+    let raw_token = stdout
         .lines()
         .next()
         .and_then(|line| line.split_whitespace().next())
-        .map(|s| s.to_string())
-        .ok_or_else(|| io::Error::other("sha256 输出格式异常"))
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "sha256 输出格式异常:stdout='{}'",
+                stdout.chars().take(200).collect::<String>()
+            ))
+        })?;
+    parse_hash_token(raw_token)
+}
+
+/// 从 shasum/sha256sum 输出或 BtbN checksums 文件中解析 SHA256 hex。
+/// 容忍以下异常前缀(coreutils binary mode 标记 `*`、Windows path 残留 `\`、CRLF):
+/// - `<hash>  *<file>`  → `<hash>`(剥 `*` 前缀)
+/// - `\b2522...  <file>`  → `<hash>`(剥 `\` 前缀,Windows 上 Git bash shasum 偶尔出现)
+/// 严格校验:必须是 64 字符 hex,否则返回错(防止脏数据当 hash 用)
+fn parse_hash_token(raw: &str) -> io::Result<String> {
+    let trimmed = raw.trim().trim_start_matches(['*', '\\']);
+    if trimmed.len() == 64 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(trimmed.to_ascii_lowercase())
+    } else {
+        Err(io::Error::other(format!(
+            "不是 64 字符 hex SHA256:raw='{}'(len={})",
+            &raw[..raw.len().min(40)],
+            raw.len()
+        )))
+    }
 }
