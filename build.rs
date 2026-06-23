@@ -475,6 +475,7 @@ fn compute_sha256(path: &Path) -> io::Result<String> {
 /// 容忍以下异常前缀(coreutils binary mode 标记 `*`、Windows path 残留 `\`、CRLF):
 /// - `<hash>  *<file>`  → `<hash>`(剥 `*` 前缀)
 /// - `\b2522...  <file>`  → `<hash>`(剥 `\` 前缀,Windows 上 Git bash shasum 偶尔出现)
+///
 /// 严格校验:必须是 64 字符 hex,否则返回错(防止脏数据当 hash 用)
 fn parse_hash_token(raw: &str) -> io::Result<String> {
     let trimmed = raw.trim().trim_start_matches(['*', '\\']);
