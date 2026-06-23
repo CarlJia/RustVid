@@ -126,7 +126,6 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $sumFile = "target/SHA256SUMS"
           if (Test-Path $sumFile) { Remove-Item $sumFile -Force }
-          $entries = @()
           $patterns = @(
             "target/release/bundle/macos/*.app",
             "target/release/bundle/macos/*.dmg",
@@ -136,12 +135,12 @@ jobs:
             "target/release/bundle/deb/*.deb",
             "target/release/bundle/appimage/*.AppImage"
           )
-          foreach ($pat in $patterns) {
+          $entries = foreach ($pat in $patterns) {
             Get-ChildItem -Path $pat -ErrorAction SilentlyContinue | ForEach-Object {
               $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-              "$h  $("$($_.Directory.Name)/$($_.Name)")"
+              "$h  $($_.Directory.Name)/$($_.Name)"
             }
-          } | ForEach-Object { $entries += $_ }
+          }
           $entries | Out-File -FilePath $sumFile -Encoding utf8
           Get-Content $sumFile
 
