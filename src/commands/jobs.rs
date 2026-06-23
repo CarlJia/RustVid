@@ -5,7 +5,7 @@ use crate::{
     app::AppState,
     domain::{
         job::JobStatus,
-        preset::{OutputTarget, PresetId, presets as domain_presets, Preset},
+        preset::{OutputTarget, Preset, PresetId, presets as domain_presets},
     },
 };
 
@@ -66,11 +66,7 @@ impl From<crate::domain::job::VideoJob> for JobInfo {
 /// 触发 worker 立即处理下一个 queued 任务(替代原 HTTP `/api/jobs/process-next` 轮询)
 #[tauri::command]
 pub async fn process_next(state: State<'_, AppState>) -> Result<bool, String> {
-    state
-        .queue
-        .process_one()
-        .await
-        .map_err(|e| e.to_string())
+    state.queue.process_one().await.map_err(|e| e.to_string())
 }
 
 /// 给 JobInfo 填上 upload_filename(从 uploads 表查)
@@ -85,8 +81,7 @@ fn enrich_with_upload(state: &AppState, mut info: JobInfo) -> JobInfo {
 #[tauri::command]
 pub async fn list_jobs(state: State<'_, AppState>) -> Result<Vec<JobInfo>, String> {
     state.db.list_jobs().map_err(|e| e.to_string()).map(|jobs| {
-        jobs
-            .into_iter()
+        jobs.into_iter()
             .map(JobInfo::from)
             .map(|info| enrich_with_upload(state.inner(), info))
             .collect()
@@ -94,10 +89,7 @@ pub async fn list_jobs(state: State<'_, AppState>) -> Result<Vec<JobInfo>, Strin
 }
 
 #[tauri::command]
-pub async fn get_job(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<Option<JobInfo>, String> {
+pub async fn get_job(state: State<'_, AppState>, id: String) -> Result<Option<JobInfo>, String> {
     Ok(state
         .db
         .get_job(&id)
@@ -166,10 +158,7 @@ pub async fn delete_job(state: State<'_, AppState>, id: String) -> Result<(), St
 
 /// 完整清理一个 job 的所有痕迹:文件 + DB 行
 /// (用于一键清理:真删,不留 history)
-async fn purge_job(
-    state: &AppState,
-    job: &crate::domain::job::VideoJob,
-) -> anyhow::Result<()> {
+async fn purge_job(state: &AppState, job: &crate::domain::job::VideoJob) -> anyhow::Result<()> {
     // 上传源文件:可能已被前面的删除清理过,这里 silent 失败
     if let Ok(Some(upload)) = state.db.get_upload(&job.upload_id) {
         let _ = state
@@ -189,10 +178,7 @@ async fn purge_job(
 /// 一键清理所有失败任务(文件 + DB 行)。返回清理数量。
 #[tauri::command]
 pub async fn delete_failed_jobs(state: State<'_, AppState>) -> Result<usize, String> {
-    let failed = state
-        .db
-        .list_failed_jobs()
-        .map_err(|e| e.to_string())?;
+    let failed = state.db.list_failed_jobs().map_err(|e| e.to_string())?;
     let total = failed.len();
     tracing::info!(count = total, "开始一键清理失败任务");
     let mut purged = 0usize;
@@ -204,20 +190,12 @@ pub async fn delete_failed_jobs(state: State<'_, AppState>) -> Result<usize, Str
         }
         purged += 1;
     }
-    tracing::info!(
-        total,
-        purged,
-        skipped = total - purged,
-        "一键清理完成"
-    );
+    tracing::info!(total, purged, skipped = total - purged, "一键清理完成");
     Ok(purged)
 }
 
 #[tauri::command]
-pub async fn retry_job(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<JobInfo, String> {
+pub async fn retry_job(state: State<'_, AppState>, id: String) -> Result<JobInfo, String> {
     let job = state
         .db
         .get_job(&id)

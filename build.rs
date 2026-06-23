@@ -22,8 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const FFMPG_STATIC_VERSION: &str = "b6.1.1";
-const FFMPG_STATIC_BASE: &str =
-    "https://github.com/eugeneware/ffmpeg-static/releases/download";
+const FFMPG_STATIC_BASE: &str = "https://github.com/eugeneware/ffmpeg-static/releases/download";
 const GITHUB_API_LATEST: &str =
     "https://api.github.com/repos/eugeneware/ffmpeg-static/releases/latest";
 
@@ -40,14 +39,14 @@ fn main() {
 
     if env::var_os("SKIP_BUNDLED_FFMPEG").is_some() {
         write_dummy(&out_dir);
-        println!("cargo:warning=SKIP_BUNDLED_FFMPEG=1,跳过 bundled ffmpeg 下载,运行时回退到系统 PATH");
+        println!(
+            "cargo:warning=SKIP_BUNDLED_FFMPEG=1,跳过 bundled ffmpeg 下载,运行时回退到系统 PATH"
+        );
         return;
     }
 
     let Some(asset) = target_to_asset(&target) else {
-        println!(
-            "cargo:warning=目标 {target} 未在 build.rs 映射表中,运行时回退到系统 ffmpeg"
-        );
+        println!("cargo:warning=目标 {target} 未在 build.rs 映射表中,运行时回退到系统 ffmpeg");
         write_dummy(&out_dir);
         return;
     };
@@ -80,9 +79,7 @@ fn main() {
         }
     }
 
-    let download_url = format!(
-        "{FFMPG_STATIC_BASE}/{FFMPG_STATIC_VERSION}/ffmpeg-{asset}"
-    );
+    let download_url = format!("{FFMPG_STATIC_BASE}/{FFMPG_STATIC_VERSION}/ffmpeg-{asset}");
     println!("cargo:warning=下载 bundled ffmpeg (asset: {asset}) ...");
 
     // 1. 从 GitHub Releases API 拿 asset 的预期 SHA256(digest 字段)
@@ -110,9 +107,7 @@ fn main() {
         let actual = match compute_sha256(&final_path) {
             Ok(s) => s,
             Err(e) => {
-                println!(
-                    "cargo:warning=算 SHA256 失败:{e}。删除下载文件,回退系统 PATH。"
-                );
+                println!("cargo:warning=算 SHA256 失败:{e}。删除下载文件,回退系统 PATH。");
                 let _ = fs::remove_file(&final_path);
                 write_dummy(&out_dir);
                 return;
@@ -211,9 +206,7 @@ fn fetch_release_metadata() -> io::Result<String> {
         .call()
         .map_err(|e| io::Error::other(format!("GitHub API 请求失败:{e}")))?;
     let mut body = String::new();
-    response
-        .into_reader()
-        .read_to_string(&mut body)?;
+    response.into_reader().read_to_string(&mut body)?;
     Ok(body)
 }
 

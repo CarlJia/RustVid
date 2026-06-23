@@ -79,14 +79,14 @@ pub async fn probe_and_resolve(input: &Path, plan: &OutputPlan) -> ResolvedBitra
         FALLBACK_AUDIO_BPS
     });
 
-    let (source_video_bps, source_audio_bps, source_duration_secs) = match run_ffmpeg_meta(input).await
-    {
-        Ok(meta) => (meta.video_bps, meta.audio_bps, meta.duration_secs),
-        Err(reason) => {
-            tracing::warn!(%reason, "ffmpeg 元数据探测失败,使用预设目标码率(不会触发 cap)");
-            (None, None, 0.0)
-        }
-    };
+    let (source_video_bps, source_audio_bps, source_duration_secs) =
+        match run_ffmpeg_meta(input).await {
+            Ok(meta) => (meta.video_bps, meta.audio_bps, meta.duration_secs),
+            Err(reason) => {
+                tracing::warn!(%reason, "ffmpeg 元数据探测失败,使用预设目标码率(不会触发 cap)");
+                (None, None, 0.0)
+            }
+        };
 
     let effective_video_bps = source_video_bps
         .map(|s| s.min(target_video_bps))

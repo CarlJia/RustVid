@@ -66,7 +66,9 @@ impl Transcoder for FfmpegTranscoder {
         let resolved = probe_and_resolve(input, plan).await;
         match plan.target {
             OutputTarget::Mp4 => transcode_mp4(input, output, plan, &resolved, progress).await,
-            OutputTarget::Hls => transcode_hls(input, output, work_dir, plan, &resolved, progress).await,
+            OutputTarget::Hls => {
+                transcode_hls(input, output, work_dir, plan, &resolved, progress).await
+            }
         }
     }
 }
@@ -148,7 +150,7 @@ async fn transcode_mp4(
 async fn transcode_hls(
     input: &Path,
     zip_output: &Path, // 最终的 .zip 输出(用户下载用)
-    work_dir: &Path,    // 放 m3u8 + ts 分片的工作目录
+    work_dir: &Path,   // 放 m3u8 + ts 分片的工作目录
     plan: &OutputPlan,
     resolved: &ResolvedBitrates,
     progress: Option<ProgressFn>,
@@ -332,10 +334,7 @@ async fn run_ffmpeg(
 
 /// 读 ffmpeg `-progress pipe:1` 输出,逐 report 调 progress 回调
 /// 回调由 process_job_inner 构造,负责 emit Tauri 事件(已知 job_id 和 AppHandle)
-async fn read_progress(
-    stdout: tokio::process::ChildStdout,
-    progress: Option<ProgressFn>,
-) {
+async fn read_progress(stdout: tokio::process::ChildStdout, progress: Option<ProgressFn>) {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     let mut reader = BufReader::new(stdout).lines();
@@ -352,7 +351,10 @@ async fn read_progress(
             let speed: f64 = speed_str.parse().unwrap_or(0.0);
 
             if let Some(cb) = &progress {
-                cb(TranscodeProgress { encoded_secs, speed });
+                cb(TranscodeProgress {
+                    encoded_secs,
+                    speed,
+                });
             }
 
             if line == "progress=end" {

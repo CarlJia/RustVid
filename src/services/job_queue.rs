@@ -214,10 +214,10 @@ pub fn user_error_summary(err: &anyhow::Error) -> String {
 
 /// 探测源视频时长(秒)。失败返回 `Err`,调用方 fallback。
 async fn probe_duration(input: &std::path::Path) -> anyhow::Result<f64> {
-    use crate::services::ffmpeg_probe::probe_and_resolve;
-    use crate::domain::preset::output_plan;
-    use crate::domain::preset::PresetId;
     use crate::domain::preset::OutputTarget;
+    use crate::domain::preset::PresetId;
+    use crate::domain::preset::output_plan;
+    use crate::services::ffmpeg_probe::probe_and_resolve;
 
     // 用最低规格探测,只关心 duration,不影响后续转码
     let plan = output_plan(PresetId::Blog, OutputTarget::Mp4);

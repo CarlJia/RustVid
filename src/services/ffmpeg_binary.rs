@@ -37,7 +37,11 @@ fn resolve_path() -> PathBuf {
 }
 
 fn extract_to_cache() -> PathBuf {
-    let bin_name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    let bin_name = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
     let target = std::env::temp_dir().join(CACHE_DIR_NAME).join(bin_name);
 
     // 大小不一致才重写;同时跑 sanity check 防止上次截断或损坏的缓存被复用
@@ -53,10 +57,8 @@ fn extract_to_cache() -> PathBuf {
             }) {
                 let valid = cfg!(target_os = "macos")
                     && (head == [0xCF, 0xFA, 0xED, 0xFE] || head == [0xCE, 0xFA, 0xED, 0xFE])
-                    || cfg!(target_os = "windows")
-                    && head == [0x4D, 0x5A, 0x00, 0x00]
-                    || cfg!(target_os = "linux")
-                    && head == [0x7F, 0x45, 0x4C, 0x46];
+                    || cfg!(target_os = "windows") && head == [0x4D, 0x5A, 0x00, 0x00]
+                    || cfg!(target_os = "linux") && head == [0x7F, 0x45, 0x4C, 0x46];
                 if !valid {
                     tracing::warn!(path = %target.display(), "bundled ffmpeg 缓存 magic 字节不匹配,重写");
                     true
@@ -153,7 +155,10 @@ fn verify_binary(path: &Path) -> std::io::Result<()> {
         return Err(std::io::Error::other(format!(
             "ffmpeg 退出 {:?},stdout 空(stderr: {})",
             output.status.code(),
-            String::from_utf8_lossy(&output.stderr).chars().take(200).collect::<String>()
+            String::from_utf8_lossy(&output.stderr)
+                .chars()
+                .take(200)
+                .collect::<String>()
         )));
     }
     Ok(())
@@ -189,7 +194,10 @@ mod tests {
 
     #[test]
     fn ffmpeg_bitrate_unit_带前后空白() {
-        assert_eq!(ffmpeg_bitrate_unit("  1.5  ", "  Mbit/s  "), Some(1_500_000));
+        assert_eq!(
+            ffmpeg_bitrate_unit("  1.5  ", "  Mbit/s  "),
+            Some(1_500_000)
+        );
     }
 
     #[test]

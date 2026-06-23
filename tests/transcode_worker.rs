@@ -117,11 +117,7 @@ async fn 启动时回收僵尸_processing_任务() {
 
     let after = app.state.db.get_job(&job.id).unwrap().unwrap();
     assert_eq!(after.status, JobStatus::Failed);
-    assert!(after
-        .error_summary
-        .as_deref()
-        .unwrap()
-        .contains("应用重启"));
+    assert!(after.error_summary.as_deref().unwrap().contains("应用重启"));
 }
 
 #[tokio::test]
@@ -148,11 +144,7 @@ async fn list_failed_jobs_只返回_failed_状态() {
     app.state.db.insert_upload(&upload).unwrap();
 
     // 3 个不同状态的任务
-    for status in [
-        JobStatus::Failed,
-        JobStatus::Queued,
-        JobStatus::Completed,
-    ] {
+    for status in [JobStatus::Failed, JobStatus::Queued, JobStatus::Completed] {
         let job = VideoJob {
             id: Uuid::new_v4().to_string(),
             upload_id: upload.id.clone(),

@@ -5,10 +5,7 @@ use crate::app::AppState;
 
 /// 返回本地预览文件的绝对路径,前端用 `convertFileSrc()` 转 webview 可访问的 URL
 #[tauri::command]
-pub fn get_artifact_preview_path(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<String, String> {
+pub fn get_artifact_preview_path(state: State<'_, AppState>, id: String) -> Result<String, String> {
     let artifact = state
         .db
         .get_artifact(&id)

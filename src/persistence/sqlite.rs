@@ -79,10 +79,7 @@ impl Database {
         )
         .context("初始化数据库结构失败")?;
         // 老库 schema 迁移:为已存在的 jobs 表加 source_duration_secs 列(忽略"已存在"错误)
-        let _ = conn.execute(
-            "ALTER TABLE jobs ADD COLUMN source_duration_secs REAL",
-            [],
-        );
+        let _ = conn.execute("ALTER TABLE jobs ADD COLUMN source_duration_secs REAL", []);
         Ok(())
     }
 

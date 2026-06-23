@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::domain::preset::{presets as domain_presets, Preset};
+use crate::domain::preset::{Preset, presets as domain_presets};
 
 #[derive(Debug, Serialize)]
 pub struct PresetInfo {
